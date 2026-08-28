@@ -85,10 +85,10 @@ To prevent runaway scripts and contain financial risk, the engine enforces three
 
 ### E. Verified Evaluation Results
 When evaluated against the standard 200-transaction simulation batch (Day 2 dataset), the system produced these canonical outcomes:
-* **Soft Decline Recovery Rate:** **42.6%** (88 transactions successfully recovered).
-* **Recovered Revenue:** **₹5,98,654.00** of otherwise permanently lost volume.
+* **Soft Decline Recovery Rate:** **43.6%** (88 transactions successfully recovered).
+* **Recovered Revenue:** **₹5,86,530.23** of otherwise permanently lost volume.
 * **Wasted Costs (Fails):** Optimized to **₹0.00** (the EV gate correctly terminated retry attempts before they became unprofitable).
-* **Human Queue Escalations:** **15 transactions** safely routed to human exception handling.
+* **Human Queue Escalations:** **13 transactions** safely routed to human exception handling.
 
 ---
 
