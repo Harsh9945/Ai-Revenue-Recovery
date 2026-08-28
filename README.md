@@ -2,13 +2,13 @@
 
 The **AI-Powered Revenue Recovery Agent** is a real-time system designed to tackle payment failures, reduce customer drop-offs, and optimize recovery costs for e-commerce merchants using Razorpay.
 
-Instead of blindly retrying failed payments (which wastes gateway fees and causes customer drop-off), this system uses a combination of **Heuristic Rule Engines**, **Google Gemini AI**, and **Expected Value (EV) Decision Gates** to decide whether to automatically retry a transaction or nudge the customer with a custom recovery payment link.
+Instead of blindly retrying failed payments, which can increase customer friction and expose the transaction to repeated bank-side declines or throttling, this system uses a combination of **Heuristic Rule Engines**, **Google Gemini AI**, and **Expected Value (EV) Decision Gates** to decide whether to automatically retry a transaction or nudge the customer with a custom recovery payment link.
 
 ---
 
 ## 🏗️ System Architecture & Services
 
-The system is split into three main microservices, coordinated via Kafka and Redis:
+The application consists of three main services, supported by Kafka and Redis infrastructure:
 
 ```mermaid
 flowchart TD
@@ -18,7 +18,7 @@ flowchart TD
 
     %% Core Processing
     SpringBoot -- "3. Check Duplicate (Key-Value)" --> Redis[("Redis Cache")]
-    SpringBoot -- "4. Save State" --> H2Database[("H2 Mem Database")]
+    SpringBoot -- "4. Save State" --> PostgresDatabase[("PostgreSQL Database")]
     SpringBoot -- "5. Failure Payload" --> FastAPI["FastAPI Classification Service (Port 8000)"]
 
     %% AI Classification
@@ -36,12 +36,12 @@ flowchart TD
     CreatePayLink -- "Send WhatsApp/SMS Nudge" --> Customer["Notify Customer"]
     
     %% Dashboard
-    H2Database -- "Live Poll / SSE" --> ViteFrontend["React Dashboard (Port 5173)"]
+    PostgresDatabase -- "Live Poll / SSE" --> ViteFrontend["React Dashboard (Port 5173)"]
 ```
 
 ### 1. Core Services Setup
 * **`payment-processor` (Spring Boot, Port 8080):**
-  Houses the core state machine, H2 database ledger, automated gateway simulators, and Kafka message listeners.
+  Houses the core state machine, PostgreSQL database ledger, automated gateway simulators, and Kafka message listeners.
 * **`classification-service` (FastAPI + Python, Port 8000):**
   Hosts the failure classification engine and Gemini API client. It categorizes errors into **Soft Failures** (transient network issues) or **Hard Failures** (limits, invalid details).
 * **`dashboard-frontend` (React + Tailwind CSS + TypeScript, Port 5173):**
@@ -70,8 +70,8 @@ For transient Soft Failures, the backend decides whether to auto-retry based on 
 \[EV = (P_{\text{recovery}} \times \text{Amount}) - \text{Total Cost}\]
 
 Where:
-* $P_{\text{recovery}}$ is the probability of recovery (derived from NPCI historical bank timeout recovery rates).
-* **Total Cost** = Gateway Retry Fee + Bank Query Load Cost + Customer Fatigue Friction Penalty.
+* $P_{\text{recovery}}$ is the configured recovery probability for the failure subtype and retry attempt. In the synthetic evaluation, this probability is provided by the test dataset; in a production system, it could be continuously estimated from historical recovery outcomes.
+* **Total Cost** consists of modeled retry-related costs, including bank-query load and customer-friction penalties.
 * **Customer Fatigue (Friction Cost):** Every retry adds a delay penalty ($currentAttempt \times ₹2$) to represent loss of customer interest. If $EV > 0$, the system pushes the event to **Kafka** to trigger a background retry. If $EV \le 0$, it terminates retries and sends a customer nudge.
 
 ---
@@ -95,8 +95,8 @@ Our failure categorization directly matches NPCI guidelines used by Indian banks
 ### B. Mathematical Definitions of Dashboard Metrics
 * **Recovery Rate:** The percentage of recovered payment volume relative to total failed transactions:
   \[\text{Recovery Rate} = \left( \frac{\text{Recovered Count}}{\text{Total Ingested}} \right) \times 100\]
-* **False-Retry Wasted Cost:** Sum of gateway fees spent on retry attempts that ultimately still failed:
-  \[\text{Wasted Cost} = \sum (\text{Retry Fee} + \text{Bank Load Cost}) \text{ for actions ending in FAILED}\]
+* **False-Retry Wasted Cost:** Sum of modeled retry costs spent on retry attempts that ultimately still failed:
+  \[\text{Wasted Cost} = \sum (\text{Retry Cost} + \text{Bank Load Cost}) \text{ for actions ending in FAILED}\]
   *This is the direct cost savings metric our Expected Value Gate optimizes.*
 * **Realized Recovery Gains:** Total transaction volume successfully recovered via automated retries and smart nudges.
 
