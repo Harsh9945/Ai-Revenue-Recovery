@@ -28,6 +28,9 @@ __pycache__/
 .env
 .env.local
 
-# Logs and databases
+# Logs, tunnels, and databases
 *.log
+pinggy*.txt
+tunnel_url.txt
 pgdata/
+

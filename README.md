@@ -5,7 +5,36 @@ The **AI-Powered Revenue Recovery Agent** is a real-time system designed to tack
 Instead of blindly retrying failed payments, which can increase customer friction and expose the transaction to repeated bank-side declines or throttling, this system uses a combination of **Heuristic Rule Engines**, **Google Gemini AI**, and **Expected Value (EV) Decision Gates** to decide whether to automatically retry a transaction or nudge the customer with a custom recovery payment link.
 
 > [!NOTE]
-> **Track Scope Focus:** The Razorpay Buildathon Track 3 brief covers multiple areas (subscriptions, voice, mandates, checkout drop-offs). This project goes deep into **Payment Failure Detection, Diagnosis & Recovery** to build a high-fidelity, production-ready recovery agent with real-time webhooks, deterministic heuristics, LLM classification, and expected-value retry gates.
+> **Track Scope Focus:** The Razorpay Buildathon Track 3 brief covers multiple areas (subscriptions, voice, mandates, checkout drop-offs). This project goes deep into **Payment Failure Detection, Diagnosis & Recovery** to build a high-fidelity, production-shaped prototype recovery agent with real-time webhooks, deterministic heuristics, LLM classification, and expected-value retry gates.
+
+> [!IMPORTANT]
+> **AI Positioning & Decision Authority:** We intentionally keep AI away from financial decisioning — Gemini handles semantic ambiguity in classification and customer nudge generation; a deterministic policy engine holds all financial authority.
+
+---
+
+## ⚡ 30-Second Demo: The ₹1,945 Recovery Lifecycle
+
+To see how the recovery agent operates in practice, trace transaction `pay_REHEARSAL_202` (₹1,945.00) through the end-to-end recovery pipeline:
+
+1. **Failure Ingestion:** A customer's card payment of ₹1,945 fails on Razorpay Checkout. The gateway delivers a `payment.failed` webhook with error code `BANK_TIMEOUT` ("Bank server timeout.").
+2. **Deduplication:** Redis captures key `dedup:pay_REHEARSAL_202` with a TTL lock, preventing race conditions and double charging from duplicate webhook retries.
+3. **Diagnostic Classification:** The heuristic rule engine resolves `BANK_TIMEOUT` against the NPCI Technical Decline taxonomy in <5ms → categorized as **Soft Failure** (100% confidence; Gemini LLM bypassed to eliminate latency and API cost).
+4. **EV Gate Check (Attempt 1):**
+   Initial recovery probability is high ($P_{\text{recovery}} = 0.65$); modeled costs are ₹2.50 (₹1.50 bank throttle risk + ₹1.00 customer friction base):
+
+   $$\text{EV} = (0.65 \times ₹1,945) - ₹2.50 = +₹1,261.75 > 0$$
+
+   *Decision:* **Auto-Retry Approved.**
+5. **Simulated Retry Execution:** Attempt #1 is dispatched against Razorpay sandbox APIs. If the issuing bank host remains unresponsive:
+6. **Recalculation & Dynamic Fatigue (Attempt 2):**
+   Recovery probability decays ($P_{\text{recovery}} = 0.40$), and customer friction cost escalates ($+₹2.00$ dynamic fatigue penalty, Total Cost = ₹4.50):
+
+   $$\text{EV} = (0.40 \times ₹1,945) - ₹4.50 = +₹773.50 > 0$$
+
+   *Decision:* **Second Auto-Retry Approved.**
+7. **Resolution or Stop Rule:**
+   - **If retry succeeds:** The transaction transitions to `RECOVERED` (₹1,945 saved, merchant ledger credited, audit trail completed).
+   - **If EV turns negative or reaches 3-retry limit:** Autonomous retries halt immediately to protect the customer from bank-side card blocking. The transaction is marked `ESCALATED`, and the system automatically generates a dynamic Razorpay payment link sent via a personalized WhatsApp/SMS customer nudge.
 
 ---
 
@@ -79,13 +108,24 @@ Where:
 * **Total Cost** consists of modeled retry-related risks and costs, including bank-throttle risk (repeated attempts risking the bank flagging/throttling the card) and customer-friction base costs.
 * **Customer Fatigue (Friction Cost):** Every retry adds a delay penalty (`currentAttempt` × ₹2) representing loss of customer interest and increased risk. If $\text{EV} > 0$, the system pushes the event to **Kafka** to trigger a background retry. If $\text{EV} \le 0$, it terminates retries and sends a customer nudge.
 
-### D. Autonomous Guardrails
+### D. Probability Calibration & Production Roadmap
+
+A critical technical question for any algorithmic recovery system is: **"Why should merchants trust the recovery probability $P_{\text{recovery}}$?"**
+
+* **Current Prototype Implementation:** The current build uses a fixed synthetic calibration table seeded from empirical Indian payment gateway and cart-recovery benchmarks (e.g., transient network timeouts yield $\sim 65\%$ recovery odds on attempt 1, decaying predictably across successive attempts).
+* **Production Calibration Architecture:** In an enterprise production deployment, $P_{\text{recovery}}$ would not be a static lookup. It would be continuously calibrated by an empirical ML calibration engine trained on historical settlement outcomes across four vectors:
+  1. **Failure Subtype & Gateway Reason Code:** Granular error classification (e.g., transient switch timeout vs. core-banking host downtime).
+  2. **Payment Method & Rail:** Segmented recovery models differentiating UPI (instant retry / PSP handles), Net Banking, and Card networks (Visa, Mastercard, RuPay).
+  3. **Issuing Bank Real-Time Telemetry:** Live PSR degradation tracking per issuer (e.g., detecting if HDFC or SBI switch is currently experiencing an outage).
+  4. **Attempt Decay & Elapsed Time Curves:** Empirical survival curves accounting for customer drop-off over elapsed minutes and issuer fraud cooling windows.
+
+### E. Autonomous Guardrails
 To prevent runaway scripts and contain financial risk, the engine enforces three explicit guardrails:
 * **High-Value Guardrail:** Transactions exceeding ₹50,000 are blocked from auto-retries and routed directly to the `ESCALATED` human queue.
 * **Low-Confidence Guardrail:** If the failure diagnosis confidence (heuristic or LLM-based) falls below 70%, the transaction is immediately escalated to avoid incorrect recovery actions.
-* **Retry Ceiling Guardrail:** Autonomous retries are capped at a maximum of 3 attempts. Upon reaching the ceiling, the transaction is marked as `FAILED` (or escalated if necessary) to avoid bank-throttling.
+* **Retry Ceiling Guardrail:** Autonomous retries are capped at a maximum of 3 attempts. Upon reaching the ceiling, the transaction is marked as `ESCALATED` and routed to the human exception queue to avoid bank-throttling.
 
-### E. Verified Evaluation Results
+### F. Verified Evaluation Results
 When evaluated against the standard 200-transaction simulation batch (Day 2 dataset), the system produced these canonical outcomes:
 * **Soft Decline Recovery Rate:** **43.6%** (88 transactions successfully recovered).
 * **Recovered Revenue:** **₹5,86,530.23** of otherwise permanently lost volume.
@@ -133,6 +173,28 @@ Total transaction volume successfully recovered via automated retries and smart 
 To prevent duplicate webhook processing during network retries, the processor uses Redis as a lock store:
 * **Key Schema:** `dedup:<transaction_id>` (locks active transactions with a TTL).
 * **Action:** Incoming webhooks check this key. If the key exists, the message is immediately acknowledged and discarded, preventing race conditions or double-charging.
+
+---
+
+## 🛠️ What Broke & How We Fixed It
+
+Building a real-time recovery agent combining live payment webhooks, Kafka event streaming, and LLM reasoning uncovered several non-trivial engineering bottlenecks:
+
+1. **Flaky Public SSH Tunnels Mid-Evaluation:**
+   - *Problem:* While testing live Razorpay webhook callbacks via free public reverse tunnels (Serveo / Pinggy), tunnels intermittently timed out, dropped TCP sockets, or changed domain endpoints, breaking the live ingestion pipeline mid-demo.
+   - *Fix:* Built a local REST replay endpoint (`/api/events/ingest`) alongside an automated PowerShell startup script (`start_services.ps1`) and ingestion test harness (`scripts/trigger_rehearsal.py`). This allows deterministic, zero-dependency local simulation of identical Razorpay webhook payloads without relying on third-party tunnel stability.
+
+2. **LLM Latency & API Rate Limits on Batch Replays:**
+   - *Problem:* Routing every incoming transaction through Google Gemini 1.5-Flash added a 1–2 second latency overhead per event and risked hitting quota rate limits during 200-transaction simulation batches.
+   - *Fix:* Implemented a two-tier decision hierarchy. Deterministic NPCI failure codes (e.g., `BANK_TIMEOUT`, `LIMIT_EXCEEDED`) are mapped instantly by a heuristic rules engine in <5ms. Gemini is reserved exclusively for unmapped or ambiguous free-text errors. Furthermore, if Gemini encounters timeouts or rate limits, the system fails over to a local regex engine with a reduced confidence score (<70%), safely routing uncertain cases to the human exception queue rather than blindly guessing.
+
+3. **In-Flight Duplicate Webhooks & Double Retries:**
+   - *Problem:* Under transient network degradation, payment gateways frequently fire duplicate retry webhooks, creating race conditions where multiple consumer threads could trigger duplicate charges on the same transaction.
+   - *Fix:* Enforced a two-layer idempotency guardrail: (1) Redis distributed locks (`dedup:<transaction_id>`) with atomic set-if-not-exists and TTL to discard redundant webhook events at the edge, and (2) PostgreSQL terminal state checks (`RECOVERED`, `FAILED`, `ESCALATED`) in `RecoveryEngine` before scheduling any retry job.
+
+4. **Runaway Retries & Bank Throttling:**
+   - *Problem:* Naive exponential backoff retries blindly re-attempt failed payments up to $N$ times, irritating customers and triggering issuing bank fraud alarms or card throttling.
+   - *Fix:* Replaced fixed retry loops with an Expected Value (EV) decision gate that balances recovery probability against customer friction cost and bank throttle risk. When $\text{EV} \le 0$ or the 3-retry ceiling is reached, retries halt immediately and the flow transitions to human escalation or dynamic Razorpay payment link generation sent via personalized WhatsApp/SMS nudges.
 
 ---
 
