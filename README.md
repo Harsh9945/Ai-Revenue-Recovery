@@ -20,21 +20,27 @@ To see how the recovery agent operates in practice, trace transaction `pay_REHEA
 2. **Deduplication:** Redis captures key `dedup:pay_REHEARSAL_202` with a TTL lock, preventing race conditions and double charging from duplicate webhook retries.
 3. **Diagnostic Classification:** The heuristic rule engine resolves `BANK_TIMEOUT` against the NPCI Technical Decline taxonomy in <5ms → categorized as **Soft Failure** (100% confidence; Gemini LLM bypassed to eliminate latency and API cost).
 4. **EV Gate Check (Attempt 1):**
-   Initial recovery probability is high ($P_{\text{recovery}} = 0.65$); modeled costs are ₹2.50 (₹1.50 bank throttle risk + ₹1.00 customer friction base):
+   Recovery probability is $P_{\text{recovery}} = 0.50$; modeled costs are ₹0.70 (₹0.50 bank throttle risk + ₹0.20 customer friction base):
 
-   $$\text{EV} = (0.65 \times ₹1,945) - ₹2.50 = +₹1,261.75 > 0$$
+   $$\text{EV} = (0.50 \times ₹1,945) - ₹0.70 = +₹971.80 > 0$$
 
    *Decision:* **Auto-Retry Approved.**
-5. **Simulated Retry Execution:** Attempt #1 is dispatched against Razorpay sandbox APIs. If the issuing bank host remains unresponsive:
+5. **Simulated Retry Execution:** Attempt #1 is dispatched against Razorpay sandbox APIs. If the issuing bank host remains degraded:
 6. **Recalculation & Dynamic Fatigue (Attempt 2):**
-   Recovery probability decays ($P_{\text{recovery}} = 0.40$), and customer friction cost escalates ($+₹2.00$ dynamic fatigue penalty, Total Cost = ₹4.50):
+   $P_{\text{recovery}}$ decays to $0.20$; customer friction cost increases ($+₹2.00$ dynamic fatigue, Total Cost = ₹2.70):
 
-   $$\text{EV} = (0.40 \times ₹1,945) - ₹4.50 = +₹773.50 > 0$$
+   $$\text{EV} = (0.20 \times ₹1,945) - ₹2.70 = +₹386.30 > 0$$
 
    *Decision:* **Second Auto-Retry Approved.**
-7. **Resolution or Stop Rule:**
+7. **Final Gate Check (Attempt 3):**
+   $P_{\text{recovery}}$ drops to $0.05$; customer friction cost increases ($+₹2.00$ dynamic fatigue, Total Cost = ₹4.70):
+
+   $$\text{EV} = (0.05 \times ₹1,945) - ₹4.70 = +₹92.55 > 0$$
+
+   *Decision:* **Marginally positive; final autonomous retry attempt allowed under policy.**
+8. **Resolution & Hard Ceiling Enforcement:**
    - **If retry succeeds:** The transaction transitions to `RECOVERED` (₹1,945 saved, merchant ledger credited, audit trail completed).
-   - **If EV turns negative or reaches 3-retry limit:** Autonomous retries halt immediately to protect the customer from bank-side card blocking. The transaction is marked `ESCALATED`, and the system automatically generates a dynamic Razorpay payment link sent via a personalized WhatsApp/SMS customer nudge.
+   - **If retry fails:** The hard 3-retry ceiling is reached (`currentAttempt >= maxRetries`). Autonomous retries halt immediately to protect the customer from bank-side card blocking. The transaction is marked `ESCALATED`, and the system automatically generates a dynamic Razorpay payment link sent via a personalized WhatsApp/SMS customer nudge.
 
 ---
 
