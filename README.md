@@ -112,21 +112,22 @@ Our failure categorization directly matches NPCI guidelines used by Indian banks
 
 ### B. Mathematical Definitions of Dashboard Metrics
 
-* **Recovery Rate:** The percentage of recovered payment volume relative to total failed transactions:
+#### 1. Recovery Rate
+The percentage of recovered payment volume relative to total failed transactions:
 
-  $$
-  \text{Recovery Rate} = \left( \frac{\text{Recovered Count}}{\text{Total Ingested}} \right) \times 100
-  $$
+$$
+\text{Recovery Rate} = \left( \frac{\text{Recovered Count}}{\text{Total Ingested}} \right) \times 100
+$$
 
-* **False-Retry Wasted Cost:** Sum of modeled retry costs spent on retry attempts that ultimately still failed:
+#### 2. False-Retry Wasted Cost
+Sum of modeled retry costs spent on retry attempts that ultimately still failed (the direct metric optimized by the Expected Value Gate):
 
-  $$
-  \text{Wasted Cost} = \sum (\text{Retry Cost} + \text{Bank Throttle Risk Cost}) \quad \text{for actions ending in FAILED}
-  $$
+$$
+\text{Wasted Cost} = \sum (\text{Retry Cost} + \text{Bank Throttle Risk Cost})
+$$
 
-  *This is the direct cost savings metric our Expected Value Gate optimizes.*
-
-* **Realized Recovery Gains:** Total transaction volume successfully recovered via automated retries and smart nudges.
+#### 3. Realized Recovery Gains
+Total transaction volume successfully recovered via automated retries and smart nudges.
 
 ### C. Redis Deduplication Schema
 To prevent duplicate webhook processing during network retries, the processor uses Redis as a lock store:
