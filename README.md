@@ -63,19 +63,21 @@ flowchart TD
 
 ### B. Failure Taxonomy & Gemini Classification
 When a transaction fails, it is sent to the FastAPI classification service. It processes the error in two layers:
-1. **Rule Engine:** Matches deterministic codes (e.g., `LIMIT_EXCEEDED` $\rightarrow$ Hard, `BANK_TIMEOUT` $\rightarrow$ Soft).
+1. **Rule Engine:** Matches deterministic codes (e.g., `LIMIT_EXCEEDED` → Hard, `BANK_TIMEOUT` → Soft).
 2. **Gemini LLM (Gemini 1.5-Flash):** If the error code is unknown or ambiguous, Gemini parses the failure message semantically to determine if it is retryable, returning a JSON response.
 3. **Nudge Generation:** If the failure is a Hard error, Gemini generates a custom, friendly, 15-word customer nudge copy adapted to the failure context.
 
 ### C. The Expected Value (EV) Decision Gate
 For transient Soft Failures, the backend decides whether to auto-retry based on expected profit vs friction costs:
 
-\[EV = (P_{\text{recovery}} \times \text{Amount}) - \text{Total Cost}\]
+$$
+\text{EV} = (P_{\text{recovery}} \times \text{Amount}) - \text{Total Cost}
+$$
 
 Where:
 * $P_{\text{recovery}}$ is the configured recovery probability for the failure subtype and retry attempt. In the synthetic evaluation, this probability is provided by the test dataset; in a production system, it could be continuously estimated from historical recovery outcomes.
 * **Total Cost** consists of modeled retry-related risks and costs, including bank-throttle risk (repeated attempts risking the bank flagging/throttling the card) and customer-friction base costs.
-* **Customer Fatigue (Friction Cost):** Every retry adds a delay penalty ($currentAttempt \times ₹2$) representing loss of customer interest and increased risk. If $EV > 0$, the system pushes the event to **Kafka** to trigger a background retry. If $EV \le 0$, it terminates retries and sends a customer nudge.
+* **Customer Fatigue (Friction Cost):** Every retry adds a delay penalty (`currentAttempt` × ₹2) representing loss of customer interest and increased risk. If $\text{EV} > 0$, the system pushes the event to **Kafka** to trigger a background retry. If $\text{EV} \le 0$, it terminates retries and sends a customer nudge.
 
 ### D. Autonomous Guardrails
 To prevent runaway scripts and contain financial risk, the engine enforces three explicit guardrails:
@@ -109,11 +111,21 @@ Our failure categorization directly matches NPCI guidelines used by Indian banks
 * **Business Declines (BD):** Failures due to insufficient funds, customer cancellation, incorrect OTP/PIN inputs, card limits, or security blocks. *Operationally, these are deterministic and require user intervention (a nudge).*
 
 ### B. Mathematical Definitions of Dashboard Metrics
+
 * **Recovery Rate:** The percentage of recovered payment volume relative to total failed transactions:
-  \[\text{Recovery Rate} = \left( \frac{\text{Recovered Count}}{\text{Total Ingested}} \right) \times 100\]
+
+  $$
+  \text{Recovery Rate} = \left( \frac{\text{Recovered Count}}{\text{Total Ingested}} \right) \times 100
+  $$
+
 * **False-Retry Wasted Cost:** Sum of modeled retry costs spent on retry attempts that ultimately still failed:
-  \[\text{Wasted Cost} = \sum (\text{Retry Cost} + \text{Bank Throttle Risk Cost}) \text{ for actions ending in FAILED}\]
+
+  $$
+  \text{Wasted Cost} = \sum (\text{Retry Cost} + \text{Bank Throttle Risk Cost}) \quad \text{for actions ending in FAILED}
+  $$
+
   *This is the direct cost savings metric our Expected Value Gate optimizes.*
+
 * **Realized Recovery Gains:** Total transaction volume successfully recovered via automated retries and smart nudges.
 
 ### C. Redis Deduplication Schema
